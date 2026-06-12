@@ -1,38 +1,36 @@
 #!/bin/bash
-# ==========================================
-# ⚠️ EDITA ESTAS VARIABLES CON TU AWS AURORA/RDS ⚠️
-# ==========================================
-RDS_HOST="cafeteria-cluster.cluster-xxxx.us-east-1.rds.amazonaws.com"
-RDS_USER="admin"
-RDS_PASS="TuClaveRDS123"
-RDS_NAME="cafeteria"
-# ==========================================
+echo "🚀 Iniciando despliegue de Cafetería Pro (Base de Datos Local)..."
 
-echo "🚀 Iniciando despliegue de Cafetería Pro Cloud (Aurora/RDS)..."
-
-# 1. Actualización y preparación del entorno
+# 1. Actualización y dependencias
 export NEEDRESTART_MODE=a
 apt-get update && apt-get upgrade -y
-apt-get install -y nginx python3-venv python3-pip mysql-client
+apt-get install -y mariadb-server nginx python3-venv python3-pip
 
-# 2. Configurar la Base de Datos Remota
-echo "🗄️ Conectando a AWS RDS/Aurora para preparar el esquema..."
-mysql -h $RDS_HOST -u $RDS_USER -p$RDS_PASS -e "CREATE DATABASE IF NOT EXISTS $RDS_NAME;"
-mysql -h $RDS_HOST -u $RDS_USER -p$RDS_PASS -D $RDS_NAME -e "CREATE TABLE IF NOT EXISTS ventas (id INT AUTO_INCREMENT PRIMARY KEY, cliente VARCHAR(100) NOT NULL, tipo_cafe VARCHAR(50) NOT NULL, precio DECIMAL(6, 2) NOT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+# 2. Encender MariaDB y esperar a que despierte (Evita el Error 500)
+systemctl start mariadb
+echo "⏳ Esperando a que el motor de base de datos inicie..."
+sleep 5
 
-# 3. Crear estructura de directorios
+# 3. Configurar Base de Datos MariaDB Local
+echo "🗄️ Configurando esquema de base de datos..."
+mysql -e "CREATE DATABASE IF NOT EXISTS cafeteria;"
+mysql -e "CREATE USER IF NOT EXISTS 'cafeuser'@'localhost' IDENTIFIED BY 'ClaveLocal123';"
+mysql -e "GRANT ALL PRIVILEGES ON cafeteria.* TO 'cafeuser'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
+mysql -e "USE cafeteria; CREATE TABLE IF NOT EXISTS ventas (id INT AUTO_INCREMENT PRIMARY KEY, cliente VARCHAR(100) NOT NULL, tipo_cafe VARCHAR(50) NOT NULL, precio DECIMAL(6, 2) NOT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+
+# 4. Crear estructura
 mkdir -p /var/www/cafeteria/templates
 cd /var/www/cafeteria
 
-# 4. Crear Dependencias
 cat << EOF > requirements.txt
 Flask==3.0.3
 PyMySQL==1.1.0
 gunicorn==21.2.0
 EOF
 
-# 5. Crear Backend en Python
-cat << EOF > app.py
+# 5. Backend Python (Conectado a localhost)
+cat << 'EOF' > app.py
 from flask import Flask, render_template, request, redirect, flash
 import pymysql
 
@@ -40,7 +38,7 @@ app = Flask(__name__)
 app.secret_key = "clave_secreta_academica"
 
 def conectar_db():
-    return pymysql.connect(host="${RDS_HOST}", user="${RDS_USER}", password="${RDS_PASS}", database="${RDS_NAME}", cursorclass=pymysql.cursors.DictCursor)
+    return pymysql.connect(host="localhost", user="cafeuser", password="ClaveLocal123", database="cafeteria", cursorclass=pymysql.cursors.DictCursor)
 
 @app.route('/', methods=['GET'])
 def index():
@@ -62,7 +60,7 @@ def registrar_venta():
         with conexion.cursor() as cursor:
             cursor.execute("INSERT INTO ventas (cliente, tipo_cafe, precio) VALUES (%s, %s, %s)", (cliente, tipo_cafe, precio))
         conexion.commit()
-        flash("Pedido procesado exitosamente.", "success")
+        flash("Pedido procesado exitosamente en DB Local.", "success")
     except Exception as e:
         flash(f"Error en la base de datos: {str(e)}", "error")
     finally:
@@ -73,14 +71,14 @@ if __name__ == '__main__':
     app.run()
 EOF
 
-# 6. Crear Frontend Profesional (HTML + Tailwind CSS)
+# 6. Frontend Profesional
 cat << 'EOF' > templates/index.html
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aurora Roasters | POS System</title>
+    <title>Cafetería Pro | Local DB</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style> body { font-family: 'Inter', sans-serif; } </style>
@@ -95,18 +93,17 @@ cat << 'EOF' > templates/index.html
                     <span class="font-bold text-xl text-white tracking-wider">AURORA <span class="text-amber-500">ROASTERS</span></span>
                 </div>
                 <div class="hidden md:block text-stone-400 text-sm font-medium">
-                    AWS Cloud POS Terminal • En vivo
+                    Terminal Local (MariaDB)
                 </div>
             </div>
         </div>
     </nav>
 
     <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-        
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="mb-6 px-4 py-3 rounded-lg shadow-sm flex items-center gap-3 {% if category == 'success' %}bg-green-50 text-green-800 border-l-4 border-green-500{% else %}bg-red-50 text-red-800 border-l-4 border-red-500{% endif %} animate-pulse">
+                    <div class="mb-6 px-4 py-3 rounded-lg shadow-sm flex items-center gap-3 {% if category == 'success' %}bg-green-50 text-green-800 border-l-4 border-green-500{% else %}bg-red-50 text-red-800 border-l-4 border-red-500{% endif %}">
                         <span class="font-semibold">{{ '✓' if category == 'success' else '⚠' }}</span>
                         <p>{{ message }}</p>
                     </div>
@@ -115,50 +112,30 @@ cat << 'EOF' > templates/index.html
         {% endwith %}
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            
             <div class="lg:col-span-5">
                 <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-200">
                     <div class="bg-amber-600 px-6 py-4">
-                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                            <span>📝</span> Nuevo Pedido
-                        </h2>
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2"><span>📝</span> Nuevo Pedido</h2>
                     </div>
                     <form action="/registrar" method="POST" class="p-6 space-y-5">
                         <div>
                             <label class="block text-sm font-semibold text-stone-600 mb-1">Nombre del Cliente</label>
-                            <input type="text" name="cliente" required autocomplete="off" class="w-full px-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all outline-none bg-stone-50 focus:bg-white" placeholder="Ej. María Pérez">
+                            <input type="text" name="cliente" required autocomplete="off" class="w-full px-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none bg-stone-50 focus:bg-white" placeholder="Ej. María Pérez">
                         </div>
-                        
                         <div>
                             <label class="block text-sm font-semibold text-stone-600 mb-1">Selección de Bebida</label>
-                            <div class="relative">
-                                <select name="tipo_cafe" required class="w-full px-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all outline-none appearance-none bg-stone-50 focus:bg-white cursor-pointer">
-                                    <option value="" disabled selected>Seleccione el tipo de café...</option>
-                                    <option value="Espresso Doble">☕ Espresso Doble</option>
-                                    <option value="Latte Macchiato">🥛 Latte Macchiato</option>
-                                    <option value="Cappuccino Vainilla">☁️ Cappuccino Vainilla</option>
-                                    <option value="Flat White">🇦🇺 Flat White</option>
-                                    <option value="Cold Brew">🧊 Cold Brew Reserva</option>
-                                </select>
-                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-stone-500">
-                                    ▼
-                                </div>
-                            </div>
+                            <select name="tipo_cafe" required class="w-full px-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none bg-stone-50 focus:bg-white cursor-pointer">
+                                <option value="" disabled selected>Seleccione el café...</option>
+                                <option value="Espresso Doble">☕ Espresso Doble</option>
+                                <option value="Latte Macchiato">🥛 Latte Macchiato</option>
+                                <option value="Cappuccino Vainilla">☁️ Cappuccino Vainilla</option>
+                            </select>
                         </div>
-
                         <div>
                             <label class="block text-sm font-semibold text-stone-600 mb-1">Precio a Cobrar (USD)</label>
-                            <div class="relative">
-                                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                    <span class="text-stone-500 font-bold">$</span>
-                                </div>
-                                <input type="number" step="0.01" name="precio" required class="w-full pl-8 pr-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all outline-none bg-stone-50 focus:bg-white" placeholder="0.00">
-                            </div>
+                            <input type="number" step="0.01" name="precio" required class="w-full px-4 py-3 rounded-lg border border-stone-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none bg-stone-50 focus:bg-white" placeholder="3.50">
                         </div>
-
-                        <button type="submit" class="w-full mt-4 bg-stone-900 hover:bg-amber-600 text-white font-bold py-3.5 px-4 rounded-lg transition-colors duration-300 shadow-md flex justify-center items-center gap-2">
-                            <span>Procesar Pago</span> <span>➔</span>
-                        </button>
+                        <button type="submit" class="w-full mt-4 bg-stone-900 hover:bg-amber-600 text-white font-bold py-3.5 px-4 rounded-lg transition-colors shadow-md">Procesar Pago ➔</button>
                     </form>
                 </div>
             </div>
@@ -166,34 +143,23 @@ cat << 'EOF' > templates/index.html
             <div class="lg:col-span-7">
                 <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-200 h-full flex flex-col">
                     <div class="px-6 py-5 border-b border-stone-100 flex justify-between items-center bg-stone-50">
-                        <h2 class="text-lg font-bold text-stone-800 flex items-center gap-2">
-                            <span class="relative flex h-3 w-3">
-                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                              <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                            </span>
-                            Monitor de Órdenes Recientes
-                        </h2>
-                        <span class="text-xs font-semibold bg-stone-200 text-stone-600 px-3 py-1 rounded-full uppercase tracking-wide">Base de Datos: AWS RDS</span>
+                        <h2 class="text-lg font-bold text-stone-800 flex items-center gap-2">Monitor de Órdenes (Local)</h2>
                     </div>
-                    
                     <div class="p-6 flex-grow">
                         {% if ventas %}
                         <div class="space-y-4">
                             {% for venta in ventas %}
-                            <div class="flex items-center justify-between p-4 rounded-xl border border-stone-100 hover:shadow-md transition-shadow bg-white group">
+                            <div class="flex items-center justify-between p-4 rounded-xl border border-stone-100 hover:shadow-md transition-shadow bg-white">
                                 <div class="flex items-center gap-4">
-                                    <div class="bg-amber-100 text-amber-700 h-10 w-10 rounded-full flex items-center justify-center font-bold text-lg group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                                    <div class="bg-amber-100 text-amber-700 h-10 w-10 rounded-full flex items-center justify-center font-bold text-lg">
                                         {{ venta.cliente[0]|upper }}
                                     </div>
                                     <div>
                                         <p class="font-bold text-stone-800">{{ venta.cliente }}</p>
-                                        <p class="text-sm text-stone-500 flex items-center gap-1">
-                                            <span>⏱ {{ venta.fecha.strftime('%H:%M') }}</span> • 
-                                            <span class="font-medium text-amber-700">{{ venta.tipo_cafe }}</span>
-                                        </p>
+                                        <p class="text-sm text-stone-500">⏱ {{ venta.fecha.strftime('%H:%M') }} • <span class="font-medium text-amber-700">{{ venta.tipo_cafe }}</span></p>
                                     </div>
                                 </div>
-                                <div class="bg-green-50 border border-green-200 text-green-700 font-bold px-4 py-1.5 rounded-lg">
+                                <div class="bg-green-50 text-green-700 font-bold px-4 py-1.5 rounded-lg border border-green-200">
                                     ${{ "%.2f"|format(venta.precio) }}
                                 </div>
                             </div>
@@ -202,7 +168,7 @@ cat << 'EOF' > templates/index.html
                         {% else %}
                         <div class="flex flex-col items-center justify-center h-full text-stone-400 space-y-3 py-12">
                             <span class="text-5xl">📭</span>
-                            <p class="text-lg font-medium">El sistema está esperando la primera orden.</p>
+                            <p class="text-lg font-medium">Aún no hay ventas en la base local.</p>
                         </div>
                         {% endif %}
                     </div>
@@ -214,22 +180,17 @@ cat << 'EOF' > templates/index.html
 </html>
 EOF
 
-# 7. Configurar Entorno Python
-echo "🐍 Instalando entorno virtual Python..."
+# 7. Entorno Python
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 
-# ==========================================
-# 🛠️ CORRECCIÓN DEL ERROR 502 (PERMISOS)
-# ==========================================
-echo "🔒 Ajustando permisos de seguridad web..."
-# Transferimos la propiedad completa de la carpeta al usuario web de Nginx
+# 8. Corrección de Permisos (Adiós Error 502)
 chown -R www-data:www-data /var/www/cafeteria
 
-# 8. Crear servicio Systemd (Ahora ejecutándose como www-data)
+# 9. Configuración del Servicio (Ejecutado como www-data)
 cat << 'EOF' > /etc/systemd/system/cafeteria.service
 [Unit]
-Description=Gunicorn para Cafeteria Pro
+Description=Gunicorn para Cafeteria Local Pro
 After=network.target
 
 [Service]
@@ -243,7 +204,7 @@ ExecStart=/var/www/cafeteria/venv/bin/gunicorn --workers 2 --bind unix:cafeteria
 WantedBy=multi-user.target
 EOF
 
-# 9. Configurar Proxy Nginx
+# 10. Configuración Nginx
 cat << 'EOF' > /etc/nginx/sites-available/default
 server {
     listen 80;
@@ -255,10 +216,11 @@ server {
 }
 EOF
 
-# 10. Iniciar la magia
+# 11. Reiniciar servicios
 systemctl daemon-reload
-systemctl start cafeteria
+systemctl restart mariadb
+systemctl restart cafeteria
 systemctl enable cafeteria
 systemctl restart nginx
 
-echo "¡Despliegue Pro Completo y Libre de Errores! Ingresa a la IP pública del EC2."
+echo "✅ ¡Todo listo! Ingresa a la IP pública y presiona F5 o Ctrl+R."
